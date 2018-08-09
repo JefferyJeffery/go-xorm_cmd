@@ -51,7 +51,9 @@ func init() {
 }
 
 var (
-	genJson bool = false
+	genJson    bool = false
+	genComment bool = false
+	schema     string
 )
 
 func printReversePrompt(flag string) {
@@ -151,7 +153,10 @@ func runReverse(cmd *Command, args []string) {
 		if j, ok := configs["genJson"]; ok {
 			genJson, err = strconv.ParseBool(j)
 		}
-
+		schema, _ = configs["schema"]
+		if j, ok := configs["genComment"]; ok {
+			genComment, err = strconv.ParseBool(j)
+		}
 		//[SWH|+]
 		if j, ok := configs["prefix"]; ok {
 			prefix = j
@@ -171,6 +176,10 @@ func runReverse(cmd *Command, args []string) {
 	if err != nil {
 		log.Errorf("%v", err)
 		return
+	}
+
+	if len(schema) > 0 {
+		Orm.SetSchema(schema)
 	}
 
 	tables, err := Orm.DBMetas()

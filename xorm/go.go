@@ -19,12 +19,14 @@ import (
 var (
 	supportComment bool
 	GoLangTmpl     LangTmpl = LangTmpl{
-		template.FuncMap{"Mapper": mapper.Table2Obj,
-			"Type":    typestring,
-			"Tag":     tag,
-			"UnTitle": unTitle,
-			"gt":      gt,
-			"getCol":  getCol,
+		template.FuncMap{
+			"Mapper":   mapper.Table2Obj,
+			"Type":     typestring,
+			"Tag":      tag,
+			"UnTitle":  unTitle,
+			"gt":       gt,
+			"getCol":   getCol,
+			"distinct": distinct,
 		},
 		formatGo,
 		genGoImports,
@@ -47,6 +49,7 @@ const (
 	floatKind
 	integerKind
 	stringKind
+	sliceKind
 	uintKind
 )
 
@@ -64,6 +67,8 @@ func basicKind(v reflect.Value) (kind, error) {
 		return complexKind, nil
 	case reflect.String:
 		return stringKind, nil
+	case reflect.Slice:
+		return sliceKind, nil
 	}
 	return invalidKind, errBadComparisonType
 }
@@ -200,54 +205,12 @@ func typestring(col *core.Column) string {
 }
 
 func tag(table *core.Table, col *core.Column) string {
-	isNameId := (mapper.Table2Obj(col.Name) == "Id")
-	isIdPk := isNameId && typestring(col) == "int64"
+	// isNameId := (mapper.Table2Obj(col.Name) == "Id")
+	// isIdPk := isNameId && typestring(col) == "int64"
 
 	var res []string
-	if !col.Nullable {
-		if !isIdPk {
-			res = append(res, "not null")
-		}
-	}
-	if col.IsPrimaryKey {
-		res = append(res, "pk")
-	}
-	if col.Default != "" {
-		res = append(res, "default "+col.Default)
-	}
-	if col.IsAutoIncrement {
-		res = append(res, "autoincr")
-	}
-	if col.IsCreated {
-		res = append(res, "created")
-	}
-	if col.IsUpdated {
-		res = append(res, "updated")
-	}
-	if supportComment && col.Comment != "" {
-		res = append(res, fmt.Sprintf("comment('%s')", col.Comment))
-	}
 
-	names := make([]string, 0, len(col.Indexes))
-	for name := range col.Indexes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		index := table.Indexes[name]
-		var uistr string
-		if index.Type == core.UniqueType {
-			uistr = "unique"
-		} else if index.Type == core.IndexType {
-			uistr = "index"
-		}
-		if len(index.Cols) > 1 {
-			uistr += "(" + index.Name + ")"
-		}
-		res = append(res, uistr)
-	}
-
+	// SQLType
 	nstr := col.SQLType.Name
 	if col.Length != 0 {
 		if col.Length2 != 0 {
@@ -286,18 +249,130 @@ func tag(table *core.Table, col *core.Column) string {
 		nstr += strings.TrimLeft(opts, ",")
 		nstr += ")"
 	}
-	res = append(res, nstr)
+	res = append(res, fmt.Sprintf("%-20s", nstr))
+
+	// IsPrimaryKey
+	if col.IsPrimaryKey {
+		nstr = "pk"
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-4s", nstr))
+
+	// IsAutoIncrement
+	if col.IsAutoIncrement {
+		nstr = "autoincr"
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-10s", nstr))
+
+	// VERSION
+	if strings.ToUpper(col.Name) == "VERSION" {
+		nstr = "version"
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-10s", nstr))
+
+	// Nullable
+	if !col.Nullable {
+		if !col.IsPrimaryKey {
+			nstr = "not null"
+		} else {
+			nstr = " "
+		}
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-10s", nstr))
+
+	// Default
+	if col.Default != "" {
+		colDefault := col.Default
+		if strings.Contains(colDefault, "character varying") {
+			colDefault = "''"
+		}
+		nstr = "default " + colDefault
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-20s", nstr))
+
+	// created
+	if col.IsCreated {
+		nstr = "created"
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-10s", nstr))
+
+	// updated
+	if col.IsUpdated {
+		nstr = "updated"
+	} else {
+		nstr = " "
+	}
+	res = append(res, fmt.Sprintf("%-10s", nstr))
+
+	// Indexes
+	if len(col.Indexes) == 0 {
+		nstr = " "
+		res = append(res, fmt.Sprintf("%-20s", nstr))
+	} else {
+		names := make([]string, 0, len(col.Indexes))
+		for name := range col.Indexes {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			index := table.Indexes[name]
+			var uistr string
+			if index.Type == core.UniqueType {
+				uistr = "unique"
+			} else if index.Type == core.IndexType {
+				uistr = "index"
+			}
+			if len(index.Cols) > 1 {
+				uistr += "(" + index.Name + ")"
+			}
+			res = append(res, fmt.Sprintf("%-20s", uistr))
+		}
+	}
+
+	// postgres did not suppoert
+	if supportComment && col.Comment != "" {
+		comment := fmt.Sprintf("      comment('%s')", col.Comment)
+		res = append(res, fmt.Sprintf("%20s", comment))
+	}
 
 	var tags []string
 	if genJson {
-		tags = append(tags, "json:\""+col.Name+"\"")
+		tags = append(tags, "json:\""+col.Name+"\"  ")
 	}
 	if len(res) > 0 {
 		tags = append(tags, "xorm:\""+strings.Join(res, " ")+"\"")
 	}
+	if genComment {
+		tags = append(tags, "  comment:\""+col.Comment+"\"")
+	}
+
 	if len(tags) > 0 {
 		return "`" + strings.Join(tags, " ") + "`"
 	} else {
 		return ""
 	}
+}
+
+func distinct(input []string) []string {
+	u := make([]string, 0, len(input))
+	m := make(map[string]bool)
+	for _, val := range input {
+		if _, ok := m[val]; !ok {
+			m[val] = true
+			u = append(u, val)
+		}
+	}
+	return u
 }
